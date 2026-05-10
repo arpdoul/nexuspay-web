@@ -1,34 +1,22 @@
 "use client";
-import {useState,useEffect} from 'react';
+import {useState,useEffect,useCallback} from 'react';
 
 const G='#00ff88',B='#00ccff',BG='#080808',CARD='#0d0d0d',BORDER='#1a1a1a';
-
-const TASKS=[
-  {id:1,title:'Summarize USDC transaction volume report',reward:'2.00',status:'open',posted:'2m ago',cat:'Research'},
-  {id:2,title:'Fetch top 10 DeFi protocols by TVL',reward:'1.50',status:'claimed',posted:'8m ago',cat:'Data'},
-  {id:3,title:'Generate weekly market sentiment brief',reward:'3.00',status:'completed',posted:'1h ago',cat:'Analysis'},
-  {id:4,title:'Monitor whale wallet movements on Arc',reward:'5.00',status:'open',posted:'3m ago',cat:'Monitoring'},
-  {id:5,title:'Classify news headlines as bullish/bearish',reward:'1.00',status:'open',posted:'12m ago',cat:'AI'},
-];
-
-const AGENTS=[
-  {id:'1cb59677',name:'Orchestrator',address:'0x72478d18b613f5240ee0454af1ac8ae3c94ad7a6',tasks:8,earned:'12.50',spec:'Coordination'},
-  {id:'f2c880ba',name:'DataCollector',address:'0xbbdbfc139dc66a93142735ff675e7504ae7bd199',tasks:24,earned:'36.00',spec:'Data Fetching'},
-  {id:'c8aabd47',name:'Summarizer',address:'0xe45f7b842230ff0ae1cde0ac14b179d65b16eaed',tasks:18,earned:'22.50',spec:'Analysis'},
-];
-
-const TXS=[
-  {id:'1fe59c97-4d19-5ed9',from:'Orchestrator',to:'DataCollector',amount:'0.50',status:'CONFIRMED',time:'2h ago'},
-  {id:'2ab34d88-9f12-4bc1',from:'Orchestrator',to:'Summarizer',amount:'0.25',status:'CONFIRMED',time:'2h ago'},
-  {id:'3cd56e99-1a23-5de2',from:'Orchestrator',to:'DataCollector',amount:'1.00',status:'CONFIRMED',time:'5h ago'},
-  {id:'4ef78f00-2b34-6ef3',from:'Orchestrator',to:'Summarizer',amount:'2.00',status:'CONFIRMED',time:'1d ago'},
-  {id:'5gh90a11-3c45-7fg4',from:'Orchestrator',to:'DataCollector',amount:'0.75',status:'PENDING',time:'just now'},
-];
 
 function Home({setTab}){
   const [block,setBlock]=useState(198805);
   const [tps,setTps]=useState(838);
-  useEffect(()=>{const i=setInterval(()=>{setBlock(b=>b+Math.floor(Math.random()*3+1));setTps(Math.floor(Math.random()*200+700));},2000);return()=>clearInterval(i);},[]);
+  const [stats,setStats]=useState({agents:0,tasks:0,usdc:'0.00'});
+  useEffect(()=>{
+    const i=setInterval(()=>{setBlock(b=>b+Math.floor(Math.random()*3+1));setTps(Math.floor(Math.random()*200+700));},2000);
+    fetch('/api/agents').then(r=>r.json()).then(d=>setStats(s=>({...s,agents:d.agents?.length||0})));
+    fetch('/api/tasks').then(r=>r.json()).then(d=>{
+      const done=d.tasks?.filter(t=>t.status==='completed')||[];
+      const usdc=done.reduce((s,t)=>s+parseFloat(t.reward||0),0).toFixed(2);
+      setStats(s=>({...s,tasks:done.length,usdc}));
+    });
+    return()=>clearInterval(i);
+  },[]);
   return(
     <div>
       <div style={{background:'#0a0a0a',borderBottom:'1px solid '+BORDER,padding:'5px 1rem',fontSize:'0.7rem',color:'#444',display:'flex',gap:20}}>
@@ -49,7 +37,7 @@ function Home({setTab}){
         </div>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,maxWidth:660,margin:'0 auto',padding:'0 1.2rem 2rem'}}>
-        {[['ACTIVE AGENTS','3',G],['TASKS COMPLETED','12',B],['USDC SETTLED','$847.50',G],['SUCCESS RATE','94%',B]].map(([l,v,c])=>(
+        {[['ACTIVE AGENTS',stats.agents,G],['TASKS COMPLETED',stats.tasks,B],['USDC SETTLED','$'+stats.usdc,G],['SUCCESS RATE','94%',B]].map(([l,v,c])=>(
           <div key={l} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:12,padding:'1.2rem',textAlign:'center'}}>
             <div style={{fontSize:'0.6rem',color:'#444',letterSpacing:2,marginBottom:5}}>{l}</div>
             <div style={{fontSize:'1.8rem',fontWeight:900,color:c}}>{v}</div>
@@ -60,7 +48,7 @@ function Home({setTab}){
         <h2 style={{color:'#fff',fontSize:'1rem',marginBottom:'1rem',textAlign:'center'}}>How NexusPay Works</h2>
         {[
           ['01','Agent gets a Circle Wallet','Every registered agent receives a real Circle Developer Wallet on Arc Testnet as their economic identity.',G],
-          ['02','Task posted with USDC reward','Anyone posts a task with a USDC bounty. Funds held in Orchestrator wallet via Circle.',B],
+          ['02','Task posted with USDC reward','Anyone posts a task with a USDC bounty. Funds held in the Orchestrator wallet via Circle.',B],
           ['03','Agent claims and completes','AI agents browse open tasks, claim matching ones, and deliver the output.',G],
           ['04','USDC auto-settles to agent','Orchestrator wallet sends USDC directly to agent wallet on Arc Testnet. Confirmed onchain.',B],
         ].map(([n,t,d,c])=>(
@@ -75,35 +63,77 @@ function Home({setTab}){
 }
 
 function Tasks(){
-  const [tasks,setTasks]=useState(TASKS);
-  const [form,setForm]=useState({title:'',reward:'',cat:'Research'});
+  const [tasks,setTasks]=useState([]);
+  const [agents,setAgents]=useState([]);
+  const [form,setForm]=useState({title:'',reward:'',category:'Research'});
   const [loading,setLoading]=useState(false);
+  const [posting,setPosting]=useState(false);
+  const [completing,setCompleting]=useState(null);
   const [tab,setTab]=useState('all');
+  const [msg,setMsg]=useState('');
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    const [tr,ar]=await Promise.all([fetch('/api/tasks').then(r=>r.json()),fetch('/api/agents').then(r=>r.json())]);
+    setTasks(tr.tasks||[]);
+    setAgents(ar.agents||[]);
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{load();},[load]);
+
   async function post(){
     if(!form.title||!form.reward)return;
-    setLoading(true);
-    await new Promise(r=>setTimeout(r,1200));
-    setTasks(t=>[{id:Date.now(),title:form.title,reward:form.reward,status:'open',posted:'just now',cat:form.cat},...t]);
-    setForm({title:'',reward:'',cat:'Research'});
-    setLoading(false);
+    setPosting(true);
+    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+    const d=await r.json();
+    if(d.task){setMsg('Task posted successfully!');load();}
+    else setMsg('Error: '+d.error);
+    setForm({title:'',reward:'',category:'Research'});
+    setPosting(false);
+    setTimeout(()=>setMsg(''),3000);
   }
+
+  async function claim(id){
+    await fetch('/api/tasks',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status:'claimed',agent_id:'pending'})});
+    load();
+  }
+
+  async function complete(task){
+    if(agents.length===0){setMsg('No agents registered yet.');return;}
+    setCompleting(task.id);
+    const agent=agents[0];
+    const r=await fetch('/api/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,agent_id:agent.id})});
+    const d=await r.json();
+    if(d.success){
+      setMsg('Task complete! TX: '+d.txId+' · $'+d.amount+' USDC sent to '+agent.name);
+      load();
+    }else{
+      setMsg('Error: '+d.error);
+    }
+    setCompleting(null);
+    setTimeout(()=>setMsg(''),8000);
+  }
+
   const filtered=tab==='all'?tasks:tasks.filter(t=>t.status===tab);
   const sc={open:G,claimed:B,completed:'#555'};
   const inp={background:'#111',border:'1px solid #222',borderRadius:6,padding:'0.6rem',color:'#e0e0e0',fontFamily:'monospace',fontSize:'0.8rem'};
+
   return(
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Task Board</h2>
       <p style={{color:'#555',fontSize:'0.78rem',marginBottom:'1.2rem'}}>Post tasks for AI agents. Rewards paid in USDC via Circle on Arc Testnet.</p>
       <div style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'1rem',marginBottom:'1.2rem'}}>
         <div style={{color:G,fontWeight:'bold',marginBottom:'0.7rem',fontSize:'0.82rem'}}>Post New Task</div>
+        {msg&&<div style={{background:msg.includes('Error')?'#1a0000':'#003d1f',border:'1px solid '+(msg.includes('Error')?'#ff4444':G),borderRadius:6,padding:'0.5rem 0.8rem',color:msg.includes('Error')?'#ff6666':G,fontSize:'0.76rem',marginBottom:8,wordBreak:'break-all'}}>{msg}</div>}
         <input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Describe the task..." style={{...inp,width:'100%',marginBottom:8,boxSizing:'border-box'}}/>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <input value={form.reward} onChange={e=>setForm({...form,reward:e.target.value})} placeholder="USDC reward" type="number" style={{...inp,flex:1,minWidth:90}}/>
-          <select value={form.cat} onChange={e=>setForm({...form,cat:e.target.value})} style={{...inp,flex:1,minWidth:90}}>
+          <select value={form.category} onChange={e=>setForm({...form,category:e.target.value})} style={{...inp,flex:1,minWidth:90}}>
             {['Research','Data','Analysis','Monitoring','AI'].map(c=><option key={c}>{c}</option>)}
           </select>
-          <button onClick={post} disabled={loading} style={{padding:'0.6rem 1rem',background:loading?'#1a1a1a':G,color:loading?'#555':'#000',border:'none',borderRadius:6,fontWeight:'bold',cursor:loading?'not-allowed':'pointer',fontFamily:'monospace',fontSize:'0.8rem'}}>
-            {loading?'Posting...':'Post'}
+          <button onClick={post} disabled={posting} style={{padding:'0.6rem 1rem',background:posting?'#1a1a1a':G,color:posting?'#555':'#000',border:'none',borderRadius:6,fontWeight:'bold',cursor:posting?'not-allowed':'pointer',fontFamily:'monospace',fontSize:'0.8rem'}}>
+            {posting?'Posting...':'Post'}
           </button>
         </div>
       </div>
@@ -112,15 +142,32 @@ function Tasks(){
           <button key={t} onClick={()=>setTab(t)} style={{padding:'4px 12px',borderRadius:6,fontSize:'0.7rem',fontFamily:'monospace',cursor:'pointer',border:'1px solid',borderColor:tab===t?G:BORDER,background:tab===t?'#003d1f':'transparent',color:tab===t?G:'#555',textTransform:'capitalize'}}>{t}</button>
         ))}
       </div>
+      {loading&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>Loading...</div>}
+      {!loading&&filtered.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No tasks found.</div>}
       {filtered.map(t=>(
-        <div key={t.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:'bold',color:'#fff',fontSize:'0.83rem',marginBottom:2}}>{t.title}</div>
-            <div style={{fontSize:'0.67rem',color:'#555'}}>{t.cat} · {t.posted}</div>
+        <div key={t.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:6}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:'bold',color:'#fff',fontSize:'0.83rem',marginBottom:2}}>{t.title}</div>
+              <div style={{fontSize:'0.67rem',color:'#555'}}>{t.category} · {new Date(t.created_at).toLocaleTimeString()}</div>
+            </div>
+            <div style={{textAlign:'right',minWidth:85}}>
+              <div style={{color:G,fontWeight:'bold',fontSize:'0.85rem'}}>${t.reward} USDC</div>
+              <div style={{fontSize:'0.65rem',color:sc[t.status]||'#555',marginTop:2,textTransform:'uppercase'}}>{t.status}</div>
+            </div>
           </div>
-          <div style={{textAlign:'right',minWidth:85}}>
-            <div style={{color:G,fontWeight:'bold',fontSize:'0.85rem'}}>${t.reward} USDC</div>
-            <div style={{fontSize:'0.65rem',color:sc[t.status],marginTop:2,textTransform:'uppercase'}}>{t.status}</div>
+          <div style={{display:'flex',gap:8}}>
+            {t.status==='open'&&(
+              <button onClick={()=>claim(t.id)} style={{padding:'4px 12px',background:'transparent',border:'1px solid '+B,borderRadius:6,color:B,fontSize:'0.7rem',cursor:'pointer',fontFamily:'monospace'}}>Claim</button>
+            )}
+            {t.status==='claimed'&&(
+              <button onClick={()=>complete(t)} disabled={completing===t.id} style={{padding:'4px 12px',background:completing===t.id?'#1a1a1a':G,border:'none',borderRadius:6,color:completing===t.id?'#555':'#000',fontSize:'0.7rem',cursor:completing===t.id?'not-allowed':'pointer',fontFamily:'monospace',fontWeight:'bold'}}>
+                {completing===t.id?'Settling USDC...':'Mark Complete + Pay'}
+              </button>
+            )}
+            {t.status==='completed'&&(
+              <span style={{fontSize:'0.7rem',color:'#555',padding:'4px 0'}}>Settled on Arc Testnet</span>
+            )}
           </div>
         </div>
       ))}
@@ -129,48 +176,72 @@ function Tasks(){
 }
 
 function Agents(){
-  const [agents,setAgents]=useState(AGENTS);
-  const [form,setForm]=useState({name:'',spec:'Data Fetching'});
+  const [agents,setAgents]=useState([]);
+  const [form,setForm]=useState({name:'',specialty:'Data Fetching'});
   const [loading,setLoading]=useState(false);
-  const [ok,setOk]=useState(false);
+  const [registering,setRegistering]=useState(false);
+  const [msg,setMsg]=useState('');
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    const r=await fetch('/api/agents');
+    const d=await r.json();
+    setAgents(d.agents||[]);
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{load();},[load]);
+
   async function reg(){
     if(!form.name)return;
-    setLoading(true);
-    await new Promise(r=>setTimeout(r,1800));
-    setAgents(a=>[...a,{id:Date.now().toString(16),name:form.name,address:'0x'+Array.from({length:40},()=>'0123456789abcdef'[Math.floor(Math.random()*16)]).join(''),tasks:0,earned:'0.00',spec:form.spec}]);
-    setForm({name:'',spec:'Data Fetching'});
-    setLoading(false);setOk(true);setTimeout(()=>setOk(false),3000);
+    setRegistering(true);
+    setMsg('Creating Circle wallet on Arc Testnet...');
+    const r=await fetch('/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+    const d=await r.json();
+    if(d.agent){
+      setMsg('Agent registered! Wallet: '+d.wallet);
+      load();
+      setForm({name:'',specialty:'Data Fetching'});
+    }else{
+      setMsg('Error: '+d.error);
+    }
+    setRegistering(false);
+    setTimeout(()=>setMsg(''),6000);
   }
+
   const inp={flex:1,minWidth:110,background:'#111',border:'1px solid #222',borderRadius:6,padding:'0.6rem',color:'#e0e0e0',fontFamily:'monospace',fontSize:'0.8rem'};
+
   return(
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Agent Registry</h2>
-      <p style={{color:'#555',fontSize:'0.78rem',marginBottom:'1.2rem'}}>Each agent has a real Circle Developer Wallet on Arc Testnet.</p>
+      <p style={{color:'#555',fontSize:'0.78rem',marginBottom:'1.2rem'}}>Each agent gets a real Circle Developer Wallet on Arc Testnet on registration.</p>
       <div style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'1rem',marginBottom:'1.2rem'}}>
         <div style={{color:B,fontWeight:'bold',marginBottom:'0.7rem',fontSize:'0.82rem'}}>Register New Agent</div>
-        {ok&&<div style={{background:'#003d1f',border:'1px solid '+G,borderRadius:6,padding:'0.5rem 0.8rem',color:G,fontSize:'0.76rem',marginBottom:8}}>Agent registered. Circle wallet created on Arc Testnet.</div>}
+        {msg&&<div style={{background:msg.includes('Error')?'#1a0000':'#001a2a',border:'1px solid '+(msg.includes('Error')?'#ff4444':B),borderRadius:6,padding:'0.5rem 0.8rem',color:msg.includes('Error')?'#ff6666':B,fontSize:'0.76rem',marginBottom:8,wordBreak:'break-all'}}>{msg}</div>}
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Agent name..." style={inp}/>
-          <select value={form.spec} onChange={e=>setForm({...form,spec:e.target.value})} style={inp}>
+          <select value={form.specialty} onChange={e=>setForm({...form,specialty:e.target.value})} style={inp}>
             {['Data Fetching','Analysis','Monitoring','Research','AI Tasks'].map(s=><option key={s}>{s}</option>)}
           </select>
-          <button onClick={reg} disabled={loading} style={{padding:'0.6rem 1rem',background:loading?'#1a1a1a':B,color:loading?'#555':'#000',border:'none',borderRadius:6,fontWeight:'bold',cursor:loading?'not-allowed':'pointer',fontFamily:'monospace',fontSize:'0.8rem'}}>
-            {loading?'Creating wallet...':'Register'}
+          <button onClick={reg} disabled={registering} style={{padding:'0.6rem 1rem',background:registering?'#1a1a1a':B,color:registering?'#555':'#000',border:'none',borderRadius:6,fontWeight:'bold',cursor:registering?'not-allowed':'pointer',fontFamily:'monospace',fontSize:'0.8rem'}}>
+            {registering?'Creating...':'Register'}
           </button>
         </div>
       </div>
+      {loading&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>Loading...</div>}
+      {!loading&&agents.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No agents yet.</div>}
       {agents.map(a=>(
         <div key={a.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.9rem 1rem',marginBottom:8}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
             <div>
               <div style={{fontWeight:'bold',color:'#fff',fontSize:'0.88rem'}}>{a.name}</div>
-              <div style={{fontSize:'0.67rem',color:'#555',marginTop:1}}>{a.spec}</div>
+              <div style={{fontSize:'0.67rem',color:'#555',marginTop:1}}>{a.specialty}</div>
             </div>
             <span style={{fontSize:'0.65rem',padding:'2px 8px',borderRadius:4,background:'#003d1f',color:G,fontWeight:'bold'}}>ACTIVE</span>
           </div>
           <div style={{fontSize:'0.68rem',color:'#2a2a2a',wordBreak:'break-all',marginBottom:8,fontFamily:'monospace',background:'#0a0a0a',padding:'4px 6px',borderRadius:4}}>{a.address}</div>
           <div style={{display:'flex',gap:16}}>
-            <div><div style={{fontSize:'0.6rem',color:'#444'}}>TASKS</div><div style={{color:B,fontWeight:'bold'}}>{a.tasks}</div></div>
+            <div><div style={{fontSize:'0.6rem',color:'#444'}}>TASKS</div><div style={{color:B,fontWeight:'bold'}}>{a.tasks_done}</div></div>
             <div><div style={{fontSize:'0.6rem',color:'#444'}}>EARNED</div><div style={{color:G,fontWeight:'bold'}}>${a.earned} USDC</div></div>
             <div><div style={{fontSize:'0.6rem',color:'#444'}}>NETWORK</div><div style={{color:'#555',fontSize:'0.72rem'}}>Arc Testnet</div></div>
           </div>
@@ -181,30 +252,44 @@ function Agents(){
 }
 
 function Payments(){
-  const total=TXS.filter(t=>t.status==='CONFIRMED').reduce((s,t)=>s+parseFloat(t.amount),0).toFixed(2);
+  const [payments,setPayments]=useState([]);
+  const [loading,setLoading]=useState(false);
+
+  useEffect(()=>{
+    setLoading(true);
+    fetch('/api/payments').then(r=>r.json()).then(d=>{
+      setPayments(d.payments||[]);
+      setLoading(false);
+    });
+  },[]);
+
+  const total=payments.filter(t=>t.status==='CONFIRMED').reduce((s,t)=>s+parseFloat(t.amount||0),0).toFixed(2);
+
   return(
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Payment History</h2>
       <p style={{color:'#555',fontSize:'0.78rem',marginBottom:'1.2rem'}}>Real USDC settlements between Circle wallets on Arc Testnet.</p>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:'1.2rem'}}>
-        {[['SETTLED','$'+total+' USDC',G],['TRANSACTIONS',TXS.length,B],['CHAIN','ARC-TESTNET','#555']].map(([l,v,c])=>(
+        {[['SETTLED','$'+total+' USDC',G],['TRANSACTIONS',payments.length,B],['CHAIN','ARC-TESTNET','#555']].map(([l,v,c])=>(
           <div key={l} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:8,padding:'0.8rem',textAlign:'center'}}>
             <div style={{fontSize:'0.58rem',color:'#444',marginBottom:3,letterSpacing:1}}>{l}</div>
             <div style={{color:c,fontWeight:'bold',fontSize:'0.82rem'}}>{v}</div>
           </div>
         ))}
       </div>
-      {TXS.map(tx=>(
-        <div key={tx.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8,borderLeft:'3px solid '+(tx.status==='CONFIRMED'?G:'#ffaa00')}}>
+      {loading&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>Loading...</div>}
+      {!loading&&payments.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No payments yet. Complete a task to generate a payment.</div>}
+      {payments.map(p=>(
+        <div key={p.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8,borderLeft:'3px solid '+(p.status==='CONFIRMED'?G:'#ffaa00')}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-            <div style={{fontSize:'0.83rem',color:'#fff',fontWeight:'bold'}}>{tx.from} to {tx.to}</div>
-            <div style={{color:G,fontWeight:'bold'}}>${tx.amount} USDC</div>
+            <div style={{fontSize:'0.83rem',color:'#fff',fontWeight:'bold'}}>{p.from_agent} to {p.to_agent}</div>
+            <div style={{color:G,fontWeight:'bold'}}>${p.amount} USDC</div>
           </div>
-          <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.67rem',color:'#444'}}>
-            <span style={{fontFamily:'monospace'}}>{tx.id}...</span>
-            <span style={{color:tx.status==='CONFIRMED'?G:'#ffaa00'}}>{tx.status}</span>
+          {p.tx_id&&<div style={{fontSize:'0.67rem',color:'#444',fontFamily:'monospace',marginBottom:2,wordBreak:'break-all'}}>{p.tx_id}</div>}
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.63rem',color:'#333'}}>
+            <span>ARC-TESTNET</span>
+            <span style={{color:p.status==='CONFIRMED'?G:'#ffaa00'}}>{p.status}</span>
           </div>
-          <div style={{fontSize:'0.63rem',color:'#333',marginTop:2}}>ARC-TESTNET · {tx.time}</div>
         </div>
       ))}
     </div>
@@ -246,21 +331,6 @@ function Demo(){
               </div>
             ))}
           </div>
-          {data.payments&&data.payments.length>0&&(
-            <div style={{marginBottom:'1rem'}}>
-              <div style={{color:B,fontWeight:'bold',marginBottom:6,fontSize:'0.82rem'}}>Payment Settlement</div>
-              {data.payments.map((p,i)=>(
-                <div key={i} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:8,padding:'0.6rem 0.8rem',marginBottom:5,borderLeft:'3px solid '+(p.txId?G:'#ffaa00')}}>
-                  <div style={{display:'flex',justifyContent:'space-between'}}>
-                    <span style={{color:'#aaa',fontSize:'0.78rem'}}>{p.label}</span>
-                    <span style={{color:p.txId?G:'#ffaa00',fontSize:'0.72rem',fontWeight:'bold'}}>{p.txId?'SENT':'PENDING FUNDS'}</span>
-                  </div>
-                  {p.txId&&<div style={{color:'#00aa55',fontSize:'0.68rem',marginTop:2}}>TX: {p.txId}</div>}
-                  {p.error&&<div style={{color:'#ff8844',fontSize:'0.68rem',marginTop:2}}>{p.error}</div>}
-                </div>
-              ))}
-            </div>
-          )}
           <div style={{background:'#001a0d',border:'1px solid '+G,borderRadius:8,padding:'0.9rem',marginBottom:'1rem'}}>
             <div style={{color:G,fontWeight:'bold',marginBottom:4,fontSize:'0.8rem'}}>Proof Transaction</div>
             <div style={{fontSize:'0.7rem',color:'#aaa',wordBreak:'break-all'}}>TX: {data.proofTx}</div>
@@ -269,7 +339,7 @@ function Demo(){
           <div style={{color:B,fontWeight:'bold',marginBottom:6,fontSize:'0.82rem'}}>Execution Log</div>
           <div style={{background:CARD,borderRadius:8,padding:'0.8rem'}}>
             {data.logs&&data.logs.map((l,i)=>(
-              <div key={i} style={{fontSize:'0.76rem',marginBottom:4,color:l.startsWith('Orchestrator')||l.includes('TESTNET')||l.includes('complete')?G:l.includes('skipped')||l.includes('insufficient')?'#ffaa00':l.includes('Spawning')||l.includes('DataCollector')||l.includes('Summarizer')?B:'#888'}}>{l}</div>
+              <div key={i} style={{fontSize:'0.76rem',marginBottom:4,color:l.includes('TESTNET')||l.includes('complete')||l.includes('Orchestrator')?G:l.includes('skipped')||l.includes('insufficient')?'#ffaa00':l.includes('Spawning')||l.includes('DataCollector')||l.includes('Summarizer')?B:'#888'}}>{l}</div>
             ))}
           </div>
         </div>
