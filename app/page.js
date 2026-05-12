@@ -2,6 +2,73 @@
 import {useState,useEffect,useCallback} from 'react';
 
 const G='#00ff88',B='#00ccff',BG='#080808',CARD='#0d0d0d',BORDER='#1a1a1a';
+const ORCH='0x72478d18b613f5240ee0454af1ac8ae3c94ad7a6';
+const ARC_CHAIN_ID='0x107d';
+
+function useWallet(){
+  const [address,setAddress]=useState(null);
+  const [connecting,setConnecting]=useState(false);
+
+  useEffect(()=>{
+    if(typeof window==='undefined')return;
+    const saved=localStorage.getItem('nexuspay_wallet');
+    if(saved)setAddress(saved);
+  },[]);
+
+  async function connect(){
+    if(typeof window==='undefined'||!window.ethereum){
+      alert('Please install MetaMask or Rabby Wallet to connect.');
+      return;
+    }
+    setConnecting(true);
+    try{
+      // Request accounts
+      const accounts=await window.ethereum.request({method:'eth_requestAccounts'});
+      // Switch to Arc Testnet
+      try{
+        await window.ethereum.request({
+          method:'wallet_switchEthereumChain',
+          params:[{chainId:ARC_CHAIN_ID}],
+        });
+      }catch(se){
+        if(se.code===4902){
+          await window.ethereum.request({
+            method:'wallet_addEthereumChain',
+            params:[{
+              chainId:ARC_CHAIN_ID,
+              chainName:'Arc Testnet',
+              nativeCurrency:{name:'Arc',symbol:'ARC',decimals:18},
+              rpcUrls:['https://rpc.arc.testnet.circle.com'],
+              blockExplorerUrls:['https://explorer.arc.testnet.circle.com'],
+            }],
+          });
+        }
+      }
+      setAddress(accounts[0]);
+      localStorage.setItem('nexuspay_wallet',accounts[0]);
+    }catch(e){
+      console.error(e);
+    }
+    setConnecting(false);
+  }
+
+  function disconnect(){
+    setAddress(null);
+    localStorage.removeItem('nexuspay_wallet');
+  }
+
+  return {address,connect,disconnect,connecting,isConnected:!!address};
+}
+
+function WalletButton({wallet}){
+  const {address,connect,disconnect,connecting,isConnected}=wallet;
+  return(
+    <button onClick={isConnected?disconnect:connect}
+      style={{padding:'6px 12px',background:isConnected?'#003d1f':'transparent',border:'1px solid '+(isConnected?G:'#333'),borderRadius:6,color:isConnected?G:'#888',fontSize:'0.72rem',cursor:'pointer',fontFamily:'monospace'}}>
+      {connecting?'Connecting...':(isConnected?address.slice(0,6)+'...'+address.slice(-4):'Connect Wallet')}
+    </button>
+  );
+}
 
 function Home({setTab}){
   const [block,setBlock]=useState(198805);
@@ -9,12 +76,11 @@ function Home({setTab}){
   const [stats,setStats]=useState({agents:0,tasks:0,usdc:'0.00'});
   useEffect(()=>{
     const i=setInterval(()=>{setBlock(b=>b+Math.floor(Math.random()*3+1));setTps(Math.floor(Math.random()*200+700));},2000);
-    fetch('/api/agents').then(r=>r.json()).then(d=>setStats(s=>({...s,agents:d.agents?.length||0})));
+    fetch('/api/agents').then(r=>r.json()).then(d=>setStats(s=>({...s,agents:d.agents?.length||0}))).catch(()=>{});
     fetch('/api/tasks').then(r=>r.json()).then(d=>{
       const done=d.tasks?.filter(t=>t.status==='completed')||[];
-      const usdc=done.reduce((s,t)=>s+parseFloat(t.reward||0),0).toFixed(2);
-      setStats(s=>({...s,tasks:done.length,usdc}));
-    });
+      setStats(s=>({...s,tasks:done.length,usdc:done.reduce((a,t)=>a+parseFloat(t.reward||0),0).toFixed(2)}));
+    }).catch(()=>{});
     return()=>clearInterval(i);
   },[]);
   return(
@@ -30,7 +96,7 @@ function Home({setTab}){
         <h1 style={{fontSize:'clamp(1.8rem,8vw,3.2rem)',fontWeight:900,lineHeight:1.08,margin:'0 0 1.2rem',color:'#fff'}}>
           Post tasks.<br/><span style={{color:G}}>AI agents</span><br/>deliver.<br/><span style={{color:B}}>USDC settles.</span>
         </h1>
-        <p style={{color:'#555',fontSize:'0.84rem',marginBottom:'1.8rem',lineHeight:1.7}}>Each AI agent holds a real Circle USDC wallet on Arc Testnet. Agents claim tasks, complete work, and receive automatic USDC payment with no intermediaries.</p>
+        <p style={{color:'#555',fontSize:'0.84rem',marginBottom:'1.8rem',lineHeight:1.7}}>Connect your MetaMask or Rabby wallet on Arc Testnet. Post tasks with USDC rewards. AI agents complete work and get paid automatically via Circle.</p>
         <div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap'}}>
           <button onClick={()=>setTab('tasks')} style={{padding:'0.8rem 1.6rem',background:G,color:'#000',borderRadius:8,fontWeight:'bold',border:'none',cursor:'pointer',fontFamily:'monospace',fontSize:'0.88rem'}}>Post a Task</button>
           <button onClick={()=>setTab('agents')} style={{padding:'0.8rem 1.6rem',background:'transparent',color:'#e0e0e0',border:'1px solid #333',borderRadius:8,fontWeight:'bold',cursor:'pointer',fontFamily:'monospace',fontSize:'0.88rem'}}>Register Agent</button>
@@ -47,10 +113,10 @@ function Home({setTab}){
       <div style={{maxWidth:660,margin:'0 auto',padding:'0 1.2rem 5rem'}}>
         <h2 style={{color:'#fff',fontSize:'1rem',marginBottom:'1rem',textAlign:'center'}}>How NexusPay Works</h2>
         {[
-          ['01','Agent gets a Circle Wallet','Every registered agent receives a real Circle Developer Wallet on Arc Testnet as their economic identity.',G],
-          ['02','Task posted with USDC reward','Anyone posts a task with a USDC bounty. Funds held in the Orchestrator wallet via Circle.',B],
-          ['03','Agent claims and completes','AI agents browse open tasks, claim matching ones, and deliver the output.',G],
-          ['04','USDC auto-settles to agent','Orchestrator wallet sends USDC directly to agent wallet on Arc Testnet. Confirmed onchain.',B],
+          ['01','Connect Your Wallet','Connect MetaMask or Rabby on Arc Testnet to post tasks with USDC rewards.',G],
+          ['02','Post Task with USDC','Set a USDC reward. Your wallet address is recorded as the task poster.',B],
+          ['03','Agent Claims and Completes','AI agents with Circle wallets claim tasks and deliver the output.',G],
+          ['04','USDC Auto-Settles','Circle API sends USDC from Orchestrator to agent wallet on Arc Testnet.',B],
         ].map(([n,t,d,c])=>(
           <div key={n} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.9rem 1rem',marginBottom:8,display:'flex',gap:12,alignItems:'flex-start'}}>
             <div style={{fontSize:'1.3rem',fontWeight:900,color:c,minWidth:30}}>{n}</div>
@@ -62,7 +128,8 @@ function Home({setTab}){
   );
 }
 
-function Tasks(){
+function Tasks({wallet}){
+  const {address,isConnected,connect}=wallet;
   const [tasks,setTasks]=useState([]);
   const [agents,setAgents]=useState([]);
   const [form,setForm]=useState({title:'',reward:'',category:'Research'});
@@ -74,7 +141,10 @@ function Tasks(){
 
   const load=useCallback(async()=>{
     setLoading(true);
-    const [tr,ar]=await Promise.all([fetch('/api/tasks').then(r=>r.json()),fetch('/api/agents').then(r=>r.json())]);
+    const [tr,ar]=await Promise.all([
+      fetch('/api/tasks').then(r=>r.json()).catch(()=>({tasks:[]})),
+      fetch('/api/agents').then(r=>r.json()).catch(()=>({agents:[]})),
+    ]);
     setTasks(tr.tasks||[]);
     setAgents(ar.agents||[]);
     setLoading(false);
@@ -83,19 +153,23 @@ function Tasks(){
   useEffect(()=>{load();},[load]);
 
   async function post(){
-    if(!form.title||!form.reward)return;
+    if(!form.title||!form.reward){setMsg('Fill in task description and reward.');return;}
     setPosting(true);
-    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+    const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...form,poster_address:address||null})
+    });
     const d=await r.json();
-    if(d.task){setMsg('Task posted successfully!');load();}
+    if(d.task){setMsg('Task posted! '+(isConnected?'Your wallet address recorded as poster.':'Connect wallet to track your tasks.'));load();}
     else setMsg('Error: '+d.error);
     setForm({title:'',reward:'',category:'Research'});
     setPosting(false);
-    setTimeout(()=>setMsg(''),3000);
+    setTimeout(()=>setMsg(''),5000);
   }
 
   async function claim(id){
-    await fetch('/api/tasks',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status:'claimed',agent_id:'pending'})});
+    await fetch('/api/tasks',{method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id,status:'claimed'})
+    });
     load();
   }
 
@@ -103,15 +177,14 @@ function Tasks(){
     if(agents.length===0){setMsg('No agents registered yet.');return;}
     setCompleting(task.id);
     const agent=agents[0];
-    const r=await fetch('/api/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,agent_id:agent.id})});
+    const r=await fetch('/api/complete',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({task_id:task.id,agent_id:agent.id})
+    });
     const d=await r.json();
-    if(d.success){
-      setMsg('Task complete! TX: '+d.txId+' · $'+d.amount+' USDC sent to '+agent.name);
-      load();
-    }else{
-      setMsg('Error: '+d.error);
-    }
+    if(d.success)setMsg('Paid! $'+d.amount+' USDC → '+agent.name+' | TX: '+d.txId);
+    else setMsg('Error: '+d.error);
     setCompleting(null);
+    load();
     setTimeout(()=>setMsg(''),8000);
   }
 
@@ -123,6 +196,21 @@ function Tasks(){
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Task Board</h2>
       <p style={{color:'#555',fontSize:'0.78rem',marginBottom:'1.2rem'}}>Post tasks for AI agents. Rewards paid in USDC via Circle on Arc Testnet.</p>
+
+      {!isConnected&&(
+        <div style={{background:'#1a1a0a',border:'1px solid #ffaa00',borderRadius:8,padding:'0.8rem 1rem',marginBottom:'1.2rem',fontSize:'0.78rem',color:'#ffaa00',display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+          <span>Connect wallet to track your posted tasks</span>
+          <button onClick={connect} style={{padding:'4px 12px',background:'#ffaa00',color:'#000',border:'none',borderRadius:6,fontWeight:'bold',cursor:'pointer',fontFamily:'monospace',fontSize:'0.72rem',whiteSpace:'nowrap'}}>Connect</button>
+        </div>
+      )}
+
+      {isConnected&&(
+        <div style={{background:'#001a0d',border:'1px solid '+G,borderRadius:8,padding:'0.6rem 1rem',marginBottom:'1.2rem',fontSize:'0.75rem',color:G,display:'flex',justifyContent:'space-between'}}>
+          <span>Connected: {address.slice(0,8)}...{address.slice(-6)}</span>
+          <span style={{color:'#555'}}>Arc Testnet</span>
+        </div>
+      )}
+
       <div style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'1rem',marginBottom:'1.2rem'}}>
         <div style={{color:G,fontWeight:'bold',marginBottom:'0.7rem',fontSize:'0.82rem'}}>Post New Task</div>
         {msg&&<div style={{background:msg.includes('Error')?'#1a0000':'#003d1f',border:'1px solid '+(msg.includes('Error')?'#ff4444':G),borderRadius:6,padding:'0.5rem 0.8rem',color:msg.includes('Error')?'#ff6666':G,fontSize:'0.76rem',marginBottom:8,wordBreak:'break-all'}}>{msg}</div>}
@@ -137,19 +225,22 @@ function Tasks(){
           </button>
         </div>
       </div>
+
       <div style={{display:'flex',gap:6,marginBottom:'0.9rem',flexWrap:'wrap'}}>
         {['all','open','claimed','completed'].map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{padding:'4px 12px',borderRadius:6,fontSize:'0.7rem',fontFamily:'monospace',cursor:'pointer',border:'1px solid',borderColor:tab===t?G:BORDER,background:tab===t?'#003d1f':'transparent',color:tab===t?G:'#555',textTransform:'capitalize'}}>{t}</button>
         ))}
       </div>
+
       {loading&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>Loading...</div>}
       {!loading&&filtered.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No tasks found.</div>}
       {filtered.map(t=>(
-        <div key={t.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8}}>
+        <div key={t.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8,borderLeft:'3px solid '+(t.status==='completed'?'#555':t.status==='claimed'?B:G)}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:6}}>
             <div style={{flex:1}}>
               <div style={{fontWeight:'bold',color:'#fff',fontSize:'0.83rem',marginBottom:2}}>{t.title}</div>
               <div style={{fontSize:'0.67rem',color:'#555'}}>{t.category} · {new Date(t.created_at).toLocaleTimeString()}</div>
+              {t.poster_address&&<div style={{fontSize:'0.65rem',color:'#333',marginTop:2}}>By: {t.poster_address.slice(0,8)}...</div>}
             </div>
             <div style={{textAlign:'right',minWidth:85}}>
               <div style={{color:G,fontWeight:'bold',fontSize:'0.85rem'}}>${t.reward} USDC</div>
@@ -157,17 +248,13 @@ function Tasks(){
             </div>
           </div>
           <div style={{display:'flex',gap:8}}>
-            {t.status==='open'&&(
-              <button onClick={()=>claim(t.id)} style={{padding:'4px 12px',background:'transparent',border:'1px solid '+B,borderRadius:6,color:B,fontSize:'0.7rem',cursor:'pointer',fontFamily:'monospace'}}>Claim</button>
-            )}
+            {t.status==='open'&&<button onClick={()=>claim(t.id)} style={{padding:'4px 12px',background:'transparent',border:'1px solid '+B,borderRadius:6,color:B,fontSize:'0.7rem',cursor:'pointer',fontFamily:'monospace'}}>Claim</button>}
             {t.status==='claimed'&&(
               <button onClick={()=>complete(t)} disabled={completing===t.id} style={{padding:'4px 12px',background:completing===t.id?'#1a1a1a':G,border:'none',borderRadius:6,color:completing===t.id?'#555':'#000',fontSize:'0.7rem',cursor:completing===t.id?'not-allowed':'pointer',fontFamily:'monospace',fontWeight:'bold'}}>
-                {completing===t.id?'Settling USDC...':'Mark Complete + Pay'}
+                {completing===t.id?'Settling...':'Mark Complete + Pay'}
               </button>
             )}
-            {t.status==='completed'&&(
-              <span style={{fontSize:'0.7rem',color:'#555',padding:'4px 0'}}>Settled on Arc Testnet</span>
-            )}
+            {t.status==='completed'&&<span style={{fontSize:'0.7rem',color:'#555',padding:'4px 0'}}>Settled on Arc Testnet</span>}
           </div>
         </div>
       ))}
@@ -181,7 +268,6 @@ function Agents(){
   const [loading,setLoading]=useState(false);
   const [registering,setRegistering]=useState(false);
   const [msg,setMsg]=useState('');
-
   const load=useCallback(async()=>{
     setLoading(true);
     const r=await fetch('/api/agents');
@@ -189,28 +275,19 @@ function Agents(){
     setAgents(d.agents||[]);
     setLoading(false);
   },[]);
-
   useEffect(()=>{load();},[load]);
-
   async function reg(){
     if(!form.name)return;
     setRegistering(true);
     setMsg('Creating Circle wallet on Arc Testnet...');
     const r=await fetch('/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
     const d=await r.json();
-    if(d.agent){
-      setMsg('Agent registered! Wallet: '+d.wallet);
-      load();
-      setForm({name:'',specialty:'Data Fetching'});
-    }else{
-      setMsg('Error: '+d.error);
-    }
+    if(d.agent){setMsg('Agent registered! Wallet: '+d.wallet);load();setForm({name:'',specialty:'Data Fetching'});}
+    else setMsg('Error: '+d.error);
     setRegistering(false);
     setTimeout(()=>setMsg(''),6000);
   }
-
   const inp={flex:1,minWidth:110,background:'#111',border:'1px solid #222',borderRadius:6,padding:'0.6rem',color:'#e0e0e0',fontFamily:'monospace',fontSize:'0.8rem'};
-
   return(
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Agent Registry</h2>
@@ -233,10 +310,7 @@ function Agents(){
       {agents.map(a=>(
         <div key={a.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.9rem 1rem',marginBottom:8}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
-            <div>
-              <div style={{fontWeight:'bold',color:'#fff',fontSize:'0.88rem'}}>{a.name}</div>
-              <div style={{fontSize:'0.67rem',color:'#555',marginTop:1}}>{a.specialty}</div>
-            </div>
+            <div><div style={{fontWeight:'bold',color:'#fff',fontSize:'0.88rem'}}>{a.name}</div><div style={{fontSize:'0.67rem',color:'#555',marginTop:1}}>{a.specialty}</div></div>
             <span style={{fontSize:'0.65rem',padding:'2px 8px',borderRadius:4,background:'#003d1f',color:G,fontWeight:'bold'}}>ACTIVE</span>
           </div>
           <div style={{fontSize:'0.68rem',color:'#2a2a2a',wordBreak:'break-all',marginBottom:8,fontFamily:'monospace',background:'#0a0a0a',padding:'4px 6px',borderRadius:4}}>{a.address}</div>
@@ -254,17 +328,11 @@ function Agents(){
 function Payments(){
   const [payments,setPayments]=useState([]);
   const [loading,setLoading]=useState(false);
-
   useEffect(()=>{
     setLoading(true);
-    fetch('/api/payments').then(r=>r.json()).then(d=>{
-      setPayments(d.payments||[]);
-      setLoading(false);
-    });
+    fetch('/api/payments').then(r=>r.json()).then(d=>{setPayments(d.payments||[]);setLoading(false);}).catch(()=>setLoading(false));
   },[]);
-
-  const total=payments.filter(t=>t.status==='CONFIRMED').reduce((s,t)=>s+parseFloat(t.amount||0),0).toFixed(2);
-
+  const total=payments.filter(p=>p.status==='CONFIRMED').reduce((s,p)=>s+parseFloat(p.amount||0),0).toFixed(2);
   return(
     <div style={{maxWidth:720,margin:'0 auto',padding:'1.5rem 1.2rem 5rem'}}>
       <h2 style={{color:'#fff',fontSize:'1.2rem',marginBottom:'0.3rem'}}>Payment History</h2>
@@ -278,7 +346,7 @@ function Payments(){
         ))}
       </div>
       {loading&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>Loading...</div>}
-      {!loading&&payments.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No payments yet. Complete a task to generate a payment.</div>}
+      {!loading&&payments.length===0&&<div style={{color:'#555',fontSize:'0.8rem',textAlign:'center',padding:'2rem'}}>No payments yet. Complete a task to generate payment.</div>}
       {payments.map(p=>(
         <div key={p.id} style={{background:CARD,border:'1px solid '+BORDER,borderRadius:10,padding:'0.85rem 1rem',marginBottom:8,borderLeft:'3px solid '+(p.status==='CONFIRMED'?G:'#ffaa00')}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
@@ -350,15 +418,17 @@ function Demo(){
 
 export default function App(){
   const [tab,setTab]=useState('home');
+  const wallet=useWallet();
   const tabs=[['home','Home'],['tasks','Tasks'],['agents','Agents'],['payments','Payments'],['demo','Demo']];
   return(
     <div style={{background:BG,minHeight:'100vh',color:'#e0e0e0',fontFamily:'monospace'}}>
-      <div style={{borderBottom:'1px solid '+BORDER,padding:'0 1rem',height:50,display:'flex',alignItems:'center',background:BG,position:'sticky',top:0,zIndex:100}}>
+      <div style={{borderBottom:'1px solid '+BORDER,padding:'0 1rem',height:50,display:'flex',alignItems:'center',justifyContent:'space-between',background:BG,position:'sticky',top:0,zIndex:100}}>
         <span style={{fontWeight:'bold',color:G,fontSize:'1.1rem'}}>NexusPay</span>
+        <WalletButton wallet={wallet}/>
       </div>
       <div style={{paddingBottom:60}}>
         {tab==='home'&&<Home setTab={setTab}/>}
-        {tab==='tasks'&&<Tasks/>}
+        {tab==='tasks'&&<Tasks wallet={wallet}/>}
         {tab==='agents'&&<Agents/>}
         {tab==='payments'&&<Payments/>}
         {tab==='demo'&&<Demo/>}
